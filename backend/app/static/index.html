@@ -107,7 +107,7 @@
 <body>
 <div class="wrap">
   <h1>Clipper AI</h1>
-  <div class="sub">Phase 4 — end-to-end clips</div>
+  <div class="sub">Phase 5 — clip boundaries</div>
 
   <div class="panel">
     <h2>Environment</h2>
@@ -247,7 +247,8 @@ async function loadClips(projectId) {
         <video src="${c.video_url}" controls preload="metadata"></video>
         <div class="clipmeta">
           <div class="n">Clip ${c.index}</div>
-          <div class="t">${c.duration}s &middot; ${fmtTime(c.start)}</div>
+          <div class="t">${c.duration}s &middot; ${fmtTime(c.start)}${c.boundary_score != null ? ` &middot; ${(c.boundary_score*100).toFixed(0)}` : ""}</div>
+          ${c.boundary_notes ? `<div class="t" style="margin-top:4px;opacity:.7">${c.boundary_notes}</div>` : ""}
           ${c.qc_ok ? "" : `<div class="qc">${c.qc_issues}</div>`}
         </div>
       </div>`).join("");

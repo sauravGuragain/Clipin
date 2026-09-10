@@ -134,11 +134,21 @@ def build_ass(
     style = style or CaptionStyle()
     out = [header(style, width, height)]
 
-    for line in group_words_into_lines(words, style):
+    lines = group_words_into_lines(words, style)
+
+    for line_index, line in enumerate(lines):
         # The line stays on screen continuously; only the highlight moves.
         # Timing each event to its own word's duration leaves the screen blank
         # in the gaps between words, which reads as flicker.
         line_end = line[-1].end + style.line_hold
+
+        # ...but the hold must never run into the following line. If it does,
+        # two events are on screen at once, libass resolves the collision by
+        # stacking them, and the viewer sees two overlapping captions. Clamping
+        # here is what keeps the event stream strictly sequential.
+        if line_index + 1 < len(lines):
+            line_end = min(line_end, lines[line_index + 1][0].start)
+
         for index, active in enumerate(line):
             start = active.start - time_offset
             # Hold until the next word begins, or until the line ends.
@@ -147,8 +157,11 @@ def build_ass(
             if end <= 0:
                 continue
             start = max(0.0, start)
-            if end - start < 0.02:      # libass drops zero-length events
-                end = start + 0.02
+            # A non-positive span means the next word starts at or before this
+            # one. Skip it rather than padding the event out, because padding
+            # would push it into its successor and recreate the overlap.
+            if end <= start:
+                continue
 
             parts = []
             for i, word in enumerate(line):

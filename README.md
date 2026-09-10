@@ -3,7 +3,7 @@
 Turns long-form podcasts into short-form vertical clips. Local-first: runs on
 your machine, no cloud APIs required.
 
-**Status: Phase 4 complete** — end to end. Upload a podcast, get watchable vertical clips with captions.
+**Status: Phase 5 complete** — end to end, with solved clip boundaries.
 
 See `PLAN.md` for architecture and `STACK.md` for machine-specific decisions.
 
@@ -37,7 +37,7 @@ otherwise surface as a broken render many phases later.
 
 ```bash
 source .venv/bin/activate
-pytest -q          # 129 tests, repeatable
+pytest -q          # 160 tests, repeatable
 ```
 
 Tests run against a throwaway database in a temp directory, never
@@ -227,6 +227,96 @@ headroom.
 Both have regression tests. The lesson generalises: for anything that renders,
 watch the output.
 
+## Phase 5: clip boundaries
+
+Phase 4 grew clips greedily — start past the anchor, add segments until long
+enough, stop. Legal clips, often badly cut. Phase 5 **searches** candidate
+start/end pairs and scores them.
+
+On a synthetic transcript mixing complete sentences, fragments and filler-heavy
+runs, mean boundary score went from **0.44 to 0.80** against the same anchors.
+
+### Scoring dimensions
+
+All weights configurable in `.env`, per spec 28.
+
+| Dimension | Default | What it catches |
+|---|---|---|
+| `opener` | 0.28 | Clips that begin mid-thought |
+| `ends_sentence` | 0.24 | Clips that stop before the point lands |
+| `starts_sentence` | 0.18 | Cuts into the middle of a sentence |
+| `not_dangling` | 0.12 | Endings on "and", "the", "to" |
+| `low_filler` | 0.10 | Runs of "um", "you know", "kind of" |
+| `duration_fit` | 0.08 | Prefers the middle of the allowed range |
+
+### Discourse markers vs subordinators
+
+Not all weak openers are equally bad, and treating them alike produced visibly
+wrong clips.
+
+- **Discourse markers** — "so", "well", "okay", "anyway". Weak mid-flow, but
+  perfectly natural after a pause: that is how people start a new thought aloud.
+  **Forgiven** when preceded by ≥0.6s of silence.
+- **Subordinators** — "which", "because", "and", "though". These refer back to
+  something the viewer never saw. A pause does not repair a grammatically
+  dependent clause, so they are **never forgiven**.
+
+### Silence-aware padding
+
+Padding takes half of whatever silence actually surrounds the clip rather than a
+fixed amount, so it can never bite into the neighbouring word, with a guaranteed
+sliver of head room so the first consonant is not clipped.
+
+### Two bugs found by reading the output
+
+**Multi-word fillers never fired.** `FILLER_PHRASES` held entries like
+`"you know"` and `"i mean"`, matched against single cleaned words. They could
+not match, so every one was dead code.
+
+**Phrase openers slipped through.** Only the first word was checked, so
+"you know it was actually kind of like" scored 0.94 — "you" is not a weak
+opener. Openers are now matched as phrases before single words.
+
+### Two bugs found in manual verification
+
+Both had green test suites around them.
+
+**Captions were superimposed.** `line_hold` (added in Phase 4 to stop flicker)
+was not clamped to the following line, so each line's final event ran into the
+next line's first event. libass does not stack colliding events — it draws them
+**on top of each other at the same position**, producing garbled doubled glyphs.
+Measured: 33 of 189 sampled frames. The existing continuity test only checked
+*within* a line and never saw it.
+
+**The UI was served stale.** `FileResponse` sends ETag and Last-Modified but no
+`Cache-Control`. Browsers apply heuristic freshness to such a response and will
+serve a cached page without revalidating, which hid an entire phase's UI
+changes. Now `no-cache, must-revalidate` — revalidate every time, with the ETag
+still yielding a cheap 304.
+
+### A test that passed against the bug it was written for
+
+Worth recording because it is the more useful lesson. The first render-level
+test counted horizontal *bands* of text, assuming libass would stack colliding
+captions. It superimposes them instead, so both lines occupy identical rows and
+the band count stays at one — the test passed against the exact bug it existed
+to catch.
+
+The replacement counts **highlighted words**: exactly one word carries the
+highlight colour at a time, so two separated clusters of it mean two events are
+live. It was verified by reverting the fix and confirming it fails
+(18 offending frames), then restoring it.
+
+Every regression test in `test_regressions_phase5.py` was checked this way. A
+regression test that has never been seen to fail is an assumption, not a test.
+
+### Transcription timing is now recorded
+
+The transcribe job result carries `elapsed_seconds` and `realtime_factor`,
+measured on real work. A 90-minute podcast at 1x realtime is a very different
+product from one at 20x, and that number should come from measurement rather
+than estimation.
+
 ## On React
 
 Deferred, deliberately. Between now and the results grid the UI is a form and a
@@ -234,7 +324,7 @@ progress bar; React would add a Vite scaffold, TS config, a dev proxy and a
 build step for no new capability. It earns its place at Phase 11, where clip
 cards, sorting and review controls arrive.
 
-## Next: Phase 5
+## Next: Phase 6
 
-Real clip boundaries: filler-word ratio, sentence-quality scoring, a duration
-constraint solver, and better opener rejection.
+The LLM provider abstraction and real candidate discovery via Ollama — replacing
+evenly spaced anchors with moments the model actually finds interesting.

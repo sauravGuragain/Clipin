@@ -1,27 +1,22 @@
-"""Clip selection — deliberately naive for Phase 4.
+"""Clip selection.
 
-Anchors are spaced evenly through the podcast. There is no AI here and no
-pretence of one: `strategy="even"` says exactly what it does. Phase 6 adds real
-candidate discovery and swaps the anchor source out.
-
-What is *not* naive is the boundary snapping. That code is real, it is what
-Phase 5 builds on, and it is the difference between a clip that starts
-mid-syllable and one that starts on a sentence.
+Anchors are still spaced evenly through the podcast — `strategy="even"` says so
+plainly, and Phase 6 replaces that with real discovery. What changed in Phase 5
+is everything after the anchor: boundaries are now solved rather than grown
+greedily, scored on opening quality, sentence completeness, filler density and
+duration fit.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
-from app.services.transcription.base import Segment, Transcript, Word
-
-# A clip beginning on these reads as though it were cut out of something else.
-WEAK_OPENERS = {
-    "so", "and", "but", "or", "because", "which", "that", "then",
-    "um", "uh", "like", "yeah", "okay", "well", "also", "however",
-}
-
-SENTENCE_END = (".", "!", "?", "…")
+from app.services.clips.boundaries import (
+    BoundaryWeights,
+    pad_into_silence,
+    solve_boundaries,
+)
+from app.services.transcription.base import Transcript, Word
 
 
 @dataclass
@@ -31,27 +26,21 @@ class ClipWindow:
     words: list[Word]
     text: str
     strategy: str = "even"
-    opener_penalty: bool = False
+    boundary_score: float = 0.0
+    boundary_notes: list[str] = field(default_factory=list)
+    components: dict[str, float] = field(default_factory=dict)
 
     @property
     def duration(self) -> float:
         return self.end - self.start
 
-
-def _clean(text: str) -> str:
-    return text.strip().strip("\"'").lower()
-
-
-def is_weak_opener(word: Word) -> bool:
-    return _clean(word.text).rstrip(",") in WEAK_OPENERS
-
-
-def ends_sentence(segment: Segment) -> bool:
-    return segment.text.strip().endswith(SENTENCE_END)
+    @property
+    def opener_penalty(self) -> bool:
+        return self.components.get("opener", 1.0) < 1.0
 
 
 def anchors_for(duration: float, count: int, edge_fraction: float = 0.05) -> list[float]:
-    """Evenly spaced start points, skipping the intro and outro.
+    """Evenly spaced start points, skipping intro and outro.
 
     The margins exist because podcast openings are sponsor reads and endings are
     sign-offs, and neither makes a clip.
@@ -72,72 +61,6 @@ def anchors_for(duration: float, count: int, edge_fraction: float = 0.05) -> lis
     return [usable_start + step * i for i in range(count)]
 
 
-def snap_to_segments(
-    transcript: Transcript,
-    anchor: float,
-    min_duration: float,
-    max_duration: float,
-) -> ClipWindow | None:
-    """Grow a clip outward from an anchor, respecting segment boundaries.
-
-    Starts at the first segment at or after the anchor, then adds whole
-    segments until the clip is long enough, preferring to stop on a sentence
-    ending. Whole segments only — cutting inside one is what produces clipped
-    words.
-    """
-    segments = [s for s in transcript.segments if s.words]
-    if not segments:
-        return None
-
-    start_index = next(
-        (i for i, s in enumerate(segments) if s.start >= anchor - 0.001),
-        None,
-    )
-    if start_index is None:
-        start_index = len(segments) - 1
-
-    # Prefer a stronger opening: look ahead a little for a segment that does not
-    # begin on a filler word, but do not wander far from the anchor.
-    for offset in range(0, min(3, len(segments) - start_index)):
-        candidate = segments[start_index + offset]
-        if candidate.words and not is_weak_opener(candidate.words[0]):
-            start_index += offset
-            break
-
-    chosen: list[Segment] = []
-    for segment in segments[start_index:]:
-        prospective = segment.end - segments[start_index].start
-        if chosen and prospective > max_duration:
-            break
-        chosen.append(segment)
-        current = chosen[-1].end - chosen[0].start
-        if current >= min_duration and ends_sentence(chosen[-1]):
-            break
-        if current >= max_duration:
-            break
-
-    if not chosen:
-        return None
-
-    words = [w for s in chosen for w in s.words]
-    if not words:
-        return None
-
-    start = words[0].start
-    end = words[-1].end
-    if end - start < 1.0:
-        return None
-
-    return ClipWindow(
-        start=start,
-        end=end,
-        words=words,
-        text=" ".join(s.text.strip() for s in chosen).strip(),
-        strategy="even",
-        opener_penalty=is_weak_opener(words[0]),
-    )
-
-
 def _overlaps(a: ClipWindow, b: ClipWindow) -> bool:
     return a.start < b.end and b.start < a.end
 
@@ -147,13 +70,14 @@ def select_clips(
     count: int,
     min_duration: float = 25.0,
     max_duration: float = 60.0,
-    padding: float = 0.25,
+    padding: float = 0.35,
+    weights: BoundaryWeights | None = None,
+    min_boundary_score: float = 0.0,
 ) -> list[ClipWindow]:
-    """Pick `count` non-overlapping windows.
+    """Pick `count` non-overlapping, well-bounded windows.
 
-    Over-samples anchors then drops overlaps, because snapping moves a window
-    away from its anchor and two neighbouring anchors can land on the same
-    segment run.
+    Over-samples anchors then drops overlaps, because solving moves a window
+    away from its anchor and neighbouring anchors can converge on the same span.
     """
     if not transcript.segments:
         return []
@@ -161,27 +85,50 @@ def select_clips(
     duration = transcript.duration or transcript.segments[-1].end
     windows: list[ClipWindow] = []
 
-    for anchor in anchors_for(duration, count * 2):
-        window = snap_to_segments(transcript, anchor, min_duration, max_duration)
-        if window is None:
+    for anchor in anchors_for(duration, count * 3):
+        candidate = solve_boundaries(
+            transcript, anchor, min_duration, max_duration, weights
+        )
+        if candidate is None:
             continue
+        if candidate.score.total < min_boundary_score:
+            continue
+
+        segments = [s for s in transcript.segments if s.words]
+        chosen = segments[candidate.start_index : candidate.end_index + 1]
+        words = [w for s in chosen for w in s.words]
+        if not words:
+            continue
+
+        window = ClipWindow(
+            start=candidate.start,
+            end=candidate.end,
+            words=words,
+            text=" ".join(s.text.strip() for s in chosen).strip(),
+            strategy="even",
+            boundary_score=candidate.score.total,
+            boundary_notes=candidate.score.notes,
+            components=candidate.score.components,
+        )
+
         if any(_overlaps(window, existing) for existing in windows):
             continue
+
         windows.append(window)
         if len(windows) >= count:
             break
 
     windows.sort(key=lambda w: w.start)
 
-    # Padding is applied last, but must not push a clip past max_duration —
-    # the limit is a contract with the caller, not a suggestion.
-    if padding:
-        for window in windows:
-            headroom = max_duration - window.duration
-            if headroom <= 0:
-                continue
-            each = min(padding, headroom / 2)
-            window.start = max(0.0, window.start - each)
-            window.end = min(duration, window.end + each)
+    # Pad into whatever silence actually surrounds the clip, never past the
+    # configured maximum.
+    for window in windows:
+        headroom = max_duration - window.duration
+        if headroom <= 0:
+            continue
+        allowance = min(padding, headroom / 2)
+        window.start, window.end = pad_into_silence(
+            transcript, window.start, window.end, allowance, duration
+        )
 
     return windows

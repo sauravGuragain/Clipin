@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import time
 import json
 import subprocess
 import tempfile
@@ -190,6 +191,7 @@ async def handle_transcribe(ctx: JobContext) -> dict:
         stage = f"transcribing ({done}/{total})" if total > 1 else "transcribing"
         asyncio.run_coroutine_threadsafe(ctx.progress(done / total, stage), loop)
 
+    started_at = time.monotonic()
     transcript = await asyncio.to_thread(
         transcribe_sync,
         Path(audio_path),
@@ -215,10 +217,18 @@ async def handle_transcribe(ctx: JobContext) -> dict:
     await ctx.progress(0.98, "saving")
     path = save_transcript(project_id, transcript)
 
+    elapsed = time.monotonic() - started_at
     issues = transcript.validate()
     return {
         "cached": False,
         "transcript_path": str(path),
+        # Recorded so the realtime factor is measured on real work rather than
+        # estimated. A 90-minute podcast at 1x is a very different product from
+        # one at 20x.
+        "elapsed_seconds": round(elapsed, 1),
+        "realtime_factor": round(duration / elapsed, 2) if elapsed > 0 else None,
+        "backend": transcript.backend,
+        "model": transcript.model,
         "stats": transcript.stats(),
         "issues": len(issues),
         # Surface a few rather than all: a systematically broken alignment

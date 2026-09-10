@@ -268,6 +268,8 @@ def _serialise_clip(c: Clip) -> dict:
         "hook": c.hook,
         "score": c.score,
         "strategy": c.strategy,
+        "boundary_score": c.boundary_score,
+        "boundary_notes": c.boundary_notes,
         "crop_strategy": c.crop_strategy,
         "qc_ok": c.qc_ok,
         "qc_issues": c.qc_issues,
@@ -310,6 +312,7 @@ def list_clips(project_id: str, sort: str = "index") -> list[dict]:
     order = {
         "index": Clip.index,
         "duration": Clip.duration,
+        "score": Clip.boundary_score.desc(),
         "start": Clip.start,
     }.get(sort, Clip.index)
     with get_session() as db:

@@ -11,6 +11,7 @@ from app.core.jobs import JobContext
 from app.models.db import Clip, Project, get_session, new_id
 from app.services.captions.ass import CaptionStyle
 from app.services.clips.render import RenderSettings, render_clip
+from app.services.clips.boundaries import BoundaryWeights
 from app.services.clips.select import ClipWindow, select_clips
 from app.services.transcription.base import Transcript
 from app.services.transcription.service import transcript_path
@@ -124,8 +125,20 @@ async def handle_generate_clips(ctx: JobContext) -> dict:
         )
 
     await ctx.progress(0.05, "selecting moments")
+    weights = BoundaryWeights(
+        opener=settings.weight_opener,
+        starts_sentence=settings.weight_starts_sentence,
+        ends_sentence=settings.weight_ends_sentence,
+        not_dangling=settings.weight_not_dangling,
+        low_filler=settings.weight_low_filler,
+        duration_fit=settings.weight_duration_fit,
+    )
     windows: list[ClipWindow] = select_clips(
-        transcript, count, min_duration, max_duration
+        transcript, count, min_duration, max_duration,
+        padding=settings.clip_padding,
+        weights=weights,
+        min_boundary_score=float(params.get("min_boundary_score",
+                                            settings.min_boundary_score)),
     )
 
     if not windows:
@@ -195,6 +208,8 @@ async def handle_generate_clips(ctx: JobContext) -> dict:
                 duration=window.duration,
                 text=window.text[:5000],
                 strategy=window.strategy,
+                boundary_score=window.boundary_score,
+                boundary_notes="; ".join(window.boundary_notes) or None,
                 crop_strategy=crop_strategy,
                 render_path=str(dest),
                 qc_ok=qc["ok"],
@@ -209,6 +224,8 @@ async def handle_generate_clips(ctx: JobContext) -> dict:
             "start": round(window.start, 2),
             "end": round(window.end, 2),
             "duration": round(window.duration, 2),
+            "boundary_score": window.boundary_score,
+            "boundary_notes": window.boundary_notes,
             "qc": qc,
         })
 

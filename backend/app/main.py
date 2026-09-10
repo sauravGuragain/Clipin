@@ -61,7 +61,15 @@ app.include_router(router)
 
 @app.get("/")
 def index() -> FileResponse:
-    return FileResponse(STATIC_DIR / "index.html")
+    # Without an explicit Cache-Control, browsers apply heuristic freshness to
+    # a response carrying only ETag/Last-Modified and will serve a stale page
+    # without revalidating. That silently hid a whole phase's UI changes once.
+    # "no-cache" means revalidate every time, not "do not store" - the ETag
+    # still yields a cheap 304 when nothing changed.
+    return FileResponse(
+        STATIC_DIR / "index.html",
+        headers={"Cache-Control": "no-cache, must-revalidate"},
+    )
 
 
 @app.get("/favicon.ico")

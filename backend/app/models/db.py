@@ -107,6 +107,8 @@ class Clip(Base):
     # Phase 4 has no scoring; Phase 5 fills these in.
     score: Mapped[float | None] = mapped_column(Float, nullable=True)
     strategy: Mapped[str] = mapped_column(String(32), default="even")
+    boundary_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    boundary_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     crop_strategy: Mapped[str] = mapped_column(String(32), default="center")
 
     render_path: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -147,6 +149,16 @@ def _migrate() -> None:
     if "audio_path" not in existing:
         with engine.begin() as conn:
             conn.execute(text("ALTER TABLE projects ADD COLUMN audio_path TEXT"))
+
+    if "clips" in inspector.get_table_names():
+        clip_cols = {c["name"] for c in inspector.get_columns("clips")}
+        for column, ddl in (
+            ("boundary_score", "ALTER TABLE clips ADD COLUMN boundary_score FLOAT"),
+            ("boundary_notes", "ALTER TABLE clips ADD COLUMN boundary_notes TEXT"),
+        ):
+            if column not in clip_cols:
+                with engine.begin() as conn:
+                    conn.execute(text(ddl))
 
 
 def get_session() -> Session:

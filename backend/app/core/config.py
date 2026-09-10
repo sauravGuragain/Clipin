@@ -53,6 +53,18 @@ class Settings(BaseSettings):
     clip_min_duration: float = 25.0
     clip_max_duration: float = 60.0
     crop_strategy: str = "center"       # center | fit
+    clip_padding: float = 0.35          # max seconds taken from surrounding silence
+    # Reject clips scoring below this. 0 accepts anything the solver returns;
+    # raise it once you have seen real output and know what a bad clip scores.
+    min_boundary_score: float = 0.0
+
+    # --- boundary weights (spec 28) --------------------------------------
+    weight_opener: float = 0.28
+    weight_starts_sentence: float = 0.18
+    weight_ends_sentence: float = 0.24
+    weight_not_dangling: float = 0.12
+    weight_low_filler: float = 0.10
+    weight_duration_fit: float = 0.08
 
     # --- output ---------------------------------------------------------
     output_width: int = 1080
