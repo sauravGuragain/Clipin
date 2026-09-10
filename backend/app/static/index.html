@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Clipper AI</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --line: #262b36;
+    --text: #e6e8ec;
+    --muted: #8b93a3;
+    --accent: #5b8cff;
+    --ok: #46c07a;
+    --bad: #e0625f;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 48px 24px 80px; }
+  h1 { font-size: 20px; font-weight: 600; letter-spacing: -0.01em; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 32px; }
+  .panel {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: 20px; margin-bottom: 20px;
+  }
+  .panel h2 {
+    font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--muted); font-weight: 600; margin: 0 0 14px;
+  }
+  #drop {
+    border: 1.5px dashed var(--line); border-radius: 10px; padding: 44px 20px;
+    text-align: center; cursor: pointer; transition: border-color .15s, background .15s;
+  }
+  #drop:hover, #drop.over { border-color: var(--accent); background: rgba(91,140,255,.05); }
+  #drop p { margin: 0; color: var(--muted); font-size: 14px; }
+  #drop strong { color: var(--text); display: block; margin-bottom: 4px; font-weight: 500; }
+  .row {
+    display: flex; justify-content: space-between; gap: 16px;
+    padding: 7px 0; border-bottom: 1px solid var(--line); font-size: 13px;
+  }
+  .row:last-child { border-bottom: none; }
+  .row span:first-child { color: var(--muted); }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+  .ok { color: var(--ok); } .bad { color: var(--bad); }
+  .card {
+    border: 1px solid var(--line); border-radius: 8px;
+    padding: 14px 16px; margin-bottom: 10px;
+  }
+  .card h3 { margin: 0 0 8px; font-size: 14px; font-weight: 500; }
+  .meta { color: var(--muted); font-size: 12px; }
+  .bar { height: 3px; background: var(--line); border-radius: 2px; overflow: hidden; margin-top: 16px; }
+  .bar div { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+  .err {
+    background: rgba(224,98,95,.1); border: 1px solid rgba(224,98,95,.3);
+    color: #ffb3b1; padding: 10px 12px; border-radius: 6px;
+    font-size: 13px; margin-top: 14px;
+  }
+  .empty { color: var(--muted); font-size: 13px; }
+  .actions { display: flex; gap: 8px; align-items: center; margin-top: 12px; flex-wrap: wrap; }
+  button.act {
+    background: var(--accent); border: none; color: #fff; border-radius: 5px;
+    padding: 5px 12px; font-size: 12px; cursor: pointer; font-weight: 500;
+  }
+  button.act:hover { filter: brightness(1.1); }
+  button.act:disabled { opacity: .45; cursor: default; filter: none; }
+  button.ghost {
+    background: none; border: 1px solid var(--line); color: var(--muted);
+    border-radius: 5px; padding: 4px 10px; font-size: 11px; cursor: pointer;
+  }
+  button.ghost:hover { color: var(--text); border-color: var(--muted); }
+  .job { margin-top: 12px; }
+  .jobhead {
+    display: flex; justify-content: space-between; align-items: center;
+    font-size: 12px; margin-bottom: 6px;
+  }
+  .stage { color: var(--muted); font-family: ui-monospace, Menlo, monospace; }
+  .pct { color: var(--muted); font-family: ui-monospace, Menlo, monospace; }
+  .jbar { height: 4px; background: var(--line); border-radius: 2px; overflow: hidden; }
+  .jbar div { height: 100%; width: 0; background: var(--accent); transition: width .25s; }
+  .jbar.done div { background: var(--ok); }
+  .jbar.bad div { background: var(--bad); }
+  .jerr { color: #ffb3b1; font-size: 12px; margin-top: 8px; }
+  .badge {
+    font-size: 10px; padding: 2px 7px; border-radius: 999px;
+    border: 1px solid var(--line); color: var(--muted); margin-left: 8px;
+    text-transform: uppercase; letter-spacing: .04em;
+  }
+  .badge.ok { color: var(--ok); border-color: rgba(70,192,122,.4); }
+  button.del {
+    background: none; border: 1px solid var(--line); color: var(--muted);
+    border-radius: 5px; padding: 3px 9px; font-size: 11px; cursor: pointer;
+  }
+  button.del:hover { color: var(--bad); border-color: var(--bad); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Clipper AI</h1>
+  <div class="sub">Phase 2 — jobs and audio extraction</div>
+
+  <div class="panel">
+    <h2>Environment</h2>
+    <div id="env"><span class="empty">Checking…</span></div>
+  </div>
+
+  <div class="panel">
+    <h2>Upload</h2>
+    <div id="drop">
+      <p><strong>Drop a video here</strong>or click to choose a file</p>
+    </div>
+    <input type="file" id="file" hidden accept="video/*,audio/*" />
+    <div class="bar" id="bar" hidden><div></div></div>
+    <div id="err"></div>
+  </div>
+
+  <div class="panel">
+    <h2>Projects</h2>
+    <div id="list"><span class="empty">Loading…</span></div>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+
+const fmtDuration = (s) => {
+  if (!s && s !== 0) return "—";
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = Math.floor(s % 60);
+  return h ? `${h}h ${m}m ${sec}s` : m ? `${m}m ${sec}s` : `${sec}s`;
+};
+const fmtSize = (b) => {
+  if (!b) return "—";
+  const u = ["B", "KB", "MB", "GB"];
+  let i = 0, n = b;
+  while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+  return `${n.toFixed(1)} ${u[i]}`;
+};
+
+async function loadEnv() {
+  try {
+    const r = await fetch("/api/environment");
+    const d = await r.json();
+    $("env").innerHTML = d.checks.map(c => `
+      <div class="row">
+        <span>${c.name}</span>
+        <span class="mono ${c.ok ? "ok" : "bad"}">${c.ok ? "OK" : "FAIL"} — ${c.detail}</span>
+      </div>`).join("");
+  } catch {
+    $("env").innerHTML = '<span class="bad">Could not reach the backend.</span>';
+  }
+}
+
+const activeStreams = {};
+
+function renderJob(projectId, job) {
+  const box = document.getElementById(`job-${projectId}`);
+  if (!box) return;
+  const pct = Math.round((job.progress || 0) * 100);
+  const terminal = ["COMPLETED", "FAILED", "CANCELLED"].includes(job.status);
+  const cls = job.status === "COMPLETED" ? "done"
+            : (job.status === "FAILED" || job.status === "CANCELLED") ? "bad" : "";
+
+  let stage = job.current_stage || job.status.toLowerCase();
+  if (job.status === "COMPLETED" && job.result && job.result.cached) stage = "already extracted";
+
+  box.innerHTML = `
+    <div class="jobhead">
+      <span class="stage">${stage}</span>
+      <span class="pct">${terminal ? job.status : pct + "%"}</span>
+    </div>
+    <div class="jbar ${cls}"><div style="width:${terminal && job.status !== "COMPLETED" ? 100 : pct}%"></div></div>
+    ${job.error ? `<div class="jerr">${job.error}</div>` : ""}
+    ${!terminal ? `<div class="actions"><button class="ghost" onclick="cancelJob('${job.id}')">Cancel</button></div>` : ""}
+  `;
+
+  if (terminal) {
+    const btn = document.querySelector(`button.act[data-project="${projectId}"]`);
+    if (btn) { btn.disabled = false; btn.textContent = "Extract audio"; }
+    if (job.status === "COMPLETED") setTimeout(loadProjects, 400);
+  }
+}
+
+async function cancelJob(jobId) {
+  await fetch(`/api/jobs/${jobId}/cancel`, { method: "POST" });
+}
+
+function followJob(projectId, jobId) {
+  if (activeStreams[projectId]) activeStreams[projectId].close();
+  const es = new EventSource(`/api/jobs/${jobId}/events`);
+  activeStreams[projectId] = es;
+  es.onmessage = (e) => {
+    const job = JSON.parse(e.data);
+    renderJob(projectId, job);
+    if (["COMPLETED", "FAILED", "CANCELLED"].includes(job.status)) {
+      es.close();
+      delete activeStreams[projectId];
+    }
+  };
+  es.onerror = () => { es.close(); delete activeStreams[projectId]; };
+}
+
+async function extractAudio(projectId, force) {
+  const btn = document.querySelector(`button.act[data-project="${projectId}"]`);
+  if (btn) { btn.disabled = true; btn.textContent = "Working\u2026"; }
+  const r = await fetch(`/api/projects/${projectId}/extract-audio?force=${force ? "true" : "false"}`, { method: "POST" });
+  if (!r.ok) {
+    if (btn) { btn.disabled = false; btn.textContent = "Extract audio"; }
+    return;
+  }
+  const job = await r.json();
+  renderJob(projectId, job);
+  followJob(projectId, job.id);
+}
+
+async function loadProjects() {
+  try {
+    const r = await fetch("/api/projects");
+    const list = await r.json();
+    if (!list.length) {
+      $("list").innerHTML = '<span class="empty">No projects yet.</span>';
+      return;
+    }
+    $("list").innerHTML = list.map(p => `
+      <div class="card">
+        <h3>${p.name}${p.has_extracted_audio ? '<span class="badge ok">audio ready</span>' : ""}</h3>
+        <div class="row"><span>Duration</span><span class="mono">${fmtDuration(p.duration)}</span></div>
+        <div class="row"><span>Resolution</span><span class="mono">${p.width && p.height ? p.width + "\u00d7" + p.height : "audio only"}</span></div>
+        <div class="row"><span>Frame rate</span><span class="mono">${p.fps ? p.fps.toFixed(2) + " fps" : "\u2014"}</span></div>
+        <div class="row"><span>Codecs</span><span class="mono">${p.video_codec || "\u2014"} / ${p.audio_codec || "\u2014"}</span></div>
+        <div class="row"><span>Size</span><span class="mono">${fmtSize(p.size_bytes)}</span></div>
+        <div class="actions">
+          <button class="act" data-project="${p.id}" onclick="extractAudio('${p.id}', false)">Extract audio</button>
+          ${p.has_extracted_audio ? `<button class="ghost" onclick="extractAudio('${p.id}', true)">Re-extract</button>` : ""}
+          <button class="ghost del" data-id="${p.id}">Delete</button>
+        </div>
+        <div class="job" id="job-${p.id}"></div>
+      </div>`).join("");
+    document.querySelectorAll(".del").forEach(b => {
+      b.onclick = async () => {
+        await fetch(`/api/projects/${b.dataset.id}`, { method: "DELETE" });
+        loadProjects();
+      };
+    });
+  } catch {
+    $("list").innerHTML = '<span class="bad">Could not load projects.</span>';
+  }
+}
+
+function upload(file) {
+  $("err").innerHTML = "";
+  $("bar").hidden = false;
+  const fill = $("bar").firstElementChild;
+
+  const fd = new FormData();
+  fd.append("file", file);
+
+  const xhr = new XMLHttpRequest();
+  xhr.open("POST", "/api/projects");
+  xhr.upload.onprogress = (e) => {
+    if (e.lengthComputable) fill.style.width = (e.loaded / e.total * 100) + "%";
+  };
+  xhr.onload = () => {
+    $("bar").hidden = true;
+    fill.style.width = "0";
+    if (xhr.status === 201) {
+      loadProjects();
+    } else {
+      let msg = "Upload failed.";
+      try { msg = JSON.parse(xhr.responseText).detail || msg; } catch {}
+      $("err").innerHTML = `<div class="err">${msg}</div>`;
+    }
+  };
+  xhr.onerror = () => {
+    $("bar").hidden = true;
+    $("err").innerHTML = '<div class="err">Network error during upload.</div>';
+  };
+  xhr.send(fd);
+}
+
+const drop = $("drop");
+drop.onclick = () => $("file").click();
+$("file").onchange = (e) => e.target.files[0] && upload(e.target.files[0]);
+drop.ondragover = (e) => { e.preventDefault(); drop.classList.add("over"); };
+drop.ondragleave = () => drop.classList.remove("over");
+drop.ondrop = (e) => {
+  e.preventDefault();
+  drop.classList.remove("over");
+  if (e.dataTransfer.files[0]) upload(e.dataTransfer.files[0]);
+};
+
+loadEnv();
+loadProjects();
+</script>
+</body>
+</html>
