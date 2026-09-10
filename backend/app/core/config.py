@@ -38,6 +38,30 @@ class Settings(BaseSettings):
         ".mp4", ".mov", ".mkv", ".webm", ".m4v", ".avi", ".mp3", ".wav", ".m4a",
     )
 
+    # --- transcription --------------------------------------------------
+    # "auto" picks MLX on Apple Silicon, faster-whisper elsewhere.
+    transcribe_backend: str = "auto"
+    transcribe_model: str = ""          # empty = the backend's default
+    transcribe_language: str = ""       # empty = auto-detect
+    # Chunking exists to give real progress on long files. 0 disables it:
+    # one pass, best context, no progress reporting.
+    transcribe_chunk_seconds: float = 300.0
+    transcribe_overlap: float = 2.0
+
+    # --- clips ----------------------------------------------------------
+    default_clip_count: int = 5
+    clip_min_duration: float = 25.0
+    clip_max_duration: float = 60.0
+    crop_strategy: str = "center"       # center | fit
+
+    # --- output ---------------------------------------------------------
+    output_width: int = 1080
+    output_height: int = 1920
+    output_crf: int = 20
+    # libx264 for final quality; h264_videotoolbox uses the M-series media
+    # engine and barely heats a fanless chassis - better for previews.
+    output_encoder: str = "libx264"
+
     # --- server ---------------------------------------------------------
     host: str = "127.0.0.1"
     port: int = 8000

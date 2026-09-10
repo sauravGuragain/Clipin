@@ -90,6 +90,13 @@
     text-transform: uppercase; letter-spacing: .04em;
   }
   .badge.ok { color: var(--ok); border-color: rgba(70,192,122,.4); }
+  .clips { display: grid; grid-template-columns: repeat(auto-fill,minmax(190px,1fr)); gap: 14px; margin-top: 16px; }
+  .clipcard { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: #0c0e12; }
+  .clipcard video { width: 100%; display: block; background: #000; aspect-ratio: 9/16; }
+  .clipmeta { padding: 9px 11px; font-size: 12px; }
+  .clipmeta .n { font-weight: 600; margin-bottom: 3px; }
+  .clipmeta .t { color: var(--muted); font-family: ui-monospace, Menlo, monospace; font-size: 11px; }
+  .clipmeta .qc { color: var(--bad); font-size: 11px; margin-top: 4px; }
   button.del {
     background: none; border: 1px solid var(--line); color: var(--muted);
     border-radius: 5px; padding: 3px 9px; font-size: 11px; cursor: pointer;
@@ -100,7 +107,7 @@
 <body>
 <div class="wrap">
   <h1>Clipper AI</h1>
-  <div class="sub">Phase 2 — jobs and audio extraction</div>
+  <div class="sub">Phase 4 — end-to-end clips</div>
 
   <div class="panel">
     <h2>Environment</h2>
@@ -178,7 +185,7 @@ function renderJob(projectId, job) {
 
   if (terminal) {
     const btn = document.querySelector(`button.act[data-project="${projectId}"]`);
-    if (btn) { btn.disabled = false; btn.textContent = "Extract audio"; }
+    document.querySelectorAll(`button.act[data-project="${projectId}"]`).forEach(b => b.disabled = false);
     if (job.status === "COMPLETED") setTimeout(loadProjects, 400);
   }
 }
@@ -202,18 +209,55 @@ function followJob(projectId, jobId) {
   es.onerror = () => { es.close(); delete activeStreams[projectId]; };
 }
 
-async function extractAudio(projectId, force) {
-  const btn = document.querySelector(`button.act[data-project="${projectId}"]`);
-  if (btn) { btn.disabled = true; btn.textContent = "Working\u2026"; }
-  const r = await fetch(`/api/projects/${projectId}/extract-audio?force=${force ? "true" : "false"}`, { method: "POST" });
+async function startJob(projectId, endpoint, force) {
+  const btn = document.querySelector(`button.act[data-project="${projectId}"][data-kind="${endpoint}"]`);
+  if (btn) btn.disabled = true;
+  const r = await fetch(`/api/projects/${projectId}/${endpoint}?force=${force ? "true" : "false"}`, { method: "POST" });
   if (!r.ok) {
-    if (btn) { btn.disabled = false; btn.textContent = "Extract audio"; }
+    if (btn) btn.disabled = false;
+    let msg = "Could not start."; try { msg = (await r.json()).detail || msg; } catch {}
+    document.getElementById(`job-${projectId}`).innerHTML = `<div class="jerr">${msg}</div>`;
     return;
   }
   const job = await r.json();
   renderJob(projectId, job);
   followJob(projectId, job.id);
 }
+
+async function extractAudio(projectId, force) {
+  const btn = document.querySelector(`button.act[data-project="${projectId}"]`);
+  if (btn) { btn.disabled = true; btn.textContent = "Working\u2026"; }
+  const r = await fetch(`/api/projects/${projectId}/extract-audio?force=${force ? "true" : "false"}`, { method: "POST" });
+  if (!r.ok) {
+    document.querySelectorAll(`button.act[data-project="${projectId}"]`).forEach(b => b.disabled = false);
+    return;
+  }
+  const job = await r.json();
+  renderJob(projectId, job);
+  followJob(projectId, job.id);
+}
+
+async function loadClips(projectId) {
+  const box = document.getElementById(`clips-${projectId}`);
+  if (!box) return;
+  try {
+    const clips = await (await fetch(`/api/projects/${projectId}/clips`)).json();
+    box.innerHTML = clips.map(c => `
+      <div class="clipcard">
+        <video src="${c.video_url}" controls preload="metadata"></video>
+        <div class="clipmeta">
+          <div class="n">Clip ${c.index}</div>
+          <div class="t">${c.duration}s &middot; ${fmtTime(c.start)}</div>
+          ${c.qc_ok ? "" : `<div class="qc">${c.qc_issues}</div>`}
+        </div>
+      </div>`).join("");
+  } catch { box.innerHTML = ""; }
+}
+
+const fmtTime = (s) => {
+  const m = Math.floor(s / 60), sec = Math.floor(s % 60);
+  return `${m}:${String(sec).padStart(2, "0")}`;
+};
 
 async function loadProjects() {
   try {
@@ -225,19 +269,23 @@ async function loadProjects() {
     }
     $("list").innerHTML = list.map(p => `
       <div class="card">
-        <h3>${p.name}${p.has_extracted_audio ? '<span class="badge ok">audio ready</span>' : ""}</h3>
+        <h3>${p.name}${p.has_extracted_audio ? '<span class="badge ok">audio</span>' : ""}${p.has_transcript ? '<span class="badge ok">transcript</span>' : ""}${p.clip_count ? `<span class="badge ok">${p.clip_count} clips</span>` : ""}</h3>
         <div class="row"><span>Duration</span><span class="mono">${fmtDuration(p.duration)}</span></div>
         <div class="row"><span>Resolution</span><span class="mono">${p.width && p.height ? p.width + "\u00d7" + p.height : "audio only"}</span></div>
         <div class="row"><span>Frame rate</span><span class="mono">${p.fps ? p.fps.toFixed(2) + " fps" : "\u2014"}</span></div>
         <div class="row"><span>Codecs</span><span class="mono">${p.video_codec || "\u2014"} / ${p.audio_codec || "\u2014"}</span></div>
         <div class="row"><span>Size</span><span class="mono">${fmtSize(p.size_bytes)}</span></div>
         <div class="actions">
-          <button class="act" data-project="${p.id}" onclick="extractAudio('${p.id}', false)">Extract audio</button>
-          ${p.has_extracted_audio ? `<button class="ghost" onclick="extractAudio('${p.id}', true)">Re-extract</button>` : ""}
+          <button class="act" data-kind="extract-audio" data-project="${p.id}" onclick="startJob('${p.id}','extract-audio',false)">Extract audio</button>
+          ${p.has_extracted_audio ? `<button class="act" data-kind="transcribe" data-project="${p.id}" onclick="startJob('${p.id}','transcribe',false)">Transcribe</button>` : ""}
+          ${p.has_transcript ? `<button class="act" data-kind="clips" data-project="${p.id}" onclick="startJob('${p.id}','clips',false)">Generate clips</button>` : ""}
+          ${p.has_transcript ? `<button class="ghost" onclick="window.open('/api/projects/${p.id}/transcript','_blank')">Transcript</button>` : ""}
           <button class="ghost del" data-id="${p.id}">Delete</button>
         </div>
         <div class="job" id="job-${p.id}"></div>
+        <div class="clips" id="clips-${p.id}"></div>
       </div>`).join("");
+    list.forEach(p => { if (p.clip_count) loadClips(p.id); });
     document.querySelectorAll(".del").forEach(b => {
       b.onclick = async () => {
         await fetch(`/api/projects/${b.dataset.id}`, { method: "DELETE" });

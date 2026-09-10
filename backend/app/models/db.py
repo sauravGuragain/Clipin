@@ -90,6 +90,33 @@ class Job(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
+class Clip(Base):
+    __tablename__ = "clips"
+
+    id: Mapped[str] = mapped_column(String(12), primary_key=True, default=new_id)
+    project_id: Mapped[str] = mapped_column(String(12), index=True)
+    index: Mapped[int] = mapped_column(Integer, default=0)
+
+    start: Mapped[float] = mapped_column(Float, default=0.0)
+    end: Mapped[float] = mapped_column(Float, default=0.0)
+    duration: Mapped[float] = mapped_column(Float, default=0.0)
+
+    text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    hook: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Phase 4 has no scoring; Phase 5 fills these in.
+    score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    strategy: Mapped[str] = mapped_column(String(32), default="even")
+    crop_strategy: Mapped[str] = mapped_column(String(32), default="center")
+
+    render_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    size_bytes: Mapped[int] = mapped_column(Integer, default=0)
+    qc_ok: Mapped[bool] = mapped_column(default=True)
+    qc_issues: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 engine = create_engine(
     f"sqlite:///{settings.db_path}",
     connect_args={"check_same_thread": False},

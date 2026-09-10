@@ -6,6 +6,16 @@ pydantic-settings
 sqlalchemy
 python-multipart
 
+# --- transcription ---
+# Apple Silicon only. Runs Whisper on Metal via MLX. Marker-gated so the same
+# requirements file still installs on Linux/Intel, where the app falls back to
+# faster-whisper.
+mlx-whisper; sys_platform == "darwin" and platform_machine == "arm64"
+
+# Portable fallback. CPU-only on macOS - CTranslate2 has no Metal backend - so
+# it is a cross-check, not a default. Uncomment if you want it available.
+# faster-whisper
+
 # --- dev ---
 pytest
 pytest-asyncio

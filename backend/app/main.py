@@ -19,6 +19,8 @@ from app.core.environment import check_environment, format_report
 from app.core.jobs import runner
 from app.models.db import init_db
 from app.services.audio import handle_extract_audio
+from app.services.clips.service import handle_generate_clips
+from app.services.transcription.service import handle_transcribe
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -41,6 +43,8 @@ async def lifespan(app: FastAPI):
         raise RuntimeError("environment check failed")
 
     runner.register("extract_audio", handle_extract_audio)
+    runner.register("transcribe", handle_transcribe)
+    runner.register("generate_clips", handle_generate_clips)
     await runner.start()
 
     print(f"\nReady on http://{settings.host}:{settings.port}")
@@ -51,7 +55,7 @@ async def lifespan(app: FastAPI):
         await runner.stop()
 
 
-app = FastAPI(title="Clipper AI", version="0.2.0", lifespan=lifespan)
+app = FastAPI(title="Clipper AI", version="0.4.0", lifespan=lifespan)
 app.include_router(router)
 
 
