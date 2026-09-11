@@ -23,6 +23,17 @@ from app.services.ai.discovery import (
     window_transcript,
 )
 from app.services.ai.providers import LLMError, LLMUnavailable, get_provider
+from app.services.ai.rerank import (
+    RERANK_SYSTEM,
+    ScoringWeights,
+    apply_rerank,
+    build_rerank_prompt,
+    final_scores,
+    parse_rankings,
+    semantic_deduplicate,
+)
+from app.services.ai.similarity import get_similarity
+from app.services.clips.boundaries import solve_boundaries
 from app.services.transcription.base import Transcript
 from app.services.transcription.service import transcript_path
 
@@ -71,13 +82,24 @@ def candidates_path(project_id: str) -> Path:
 
 
 def load_candidates(project_id: str) -> list[dict]:
+    """Candidates, best first.
+
+    Sorted on read rather than trusting file order: older files predate
+    final_score, and a silently mis-ordered list would look like bad ranking
+    rather than a stale file.
+    """
     path = candidates_path(project_id)
     if not path.exists():
         return []
     try:
-        return json.loads(path.read_text()).get("candidates", [])
+        items = json.loads(path.read_text()).get("candidates", [])
     except (json.JSONDecodeError, OSError):
         return []
+    items.sort(
+        key=lambda c: c.get("final_score", c.get("normalized_score", 0.0)),
+        reverse=True,
+    )
+    return items
 
 
 def save_candidates(project_id: str, payload: dict) -> Path:
@@ -98,6 +120,7 @@ def discover_sync(
     max_duration: float,
     target_tokens: int,
     retries: int,
+    rerank: bool = True,
     on_window_done=None,
     should_cancel=None,
 ) -> dict:
@@ -178,9 +201,62 @@ def discover_sync(
 
     normalize_scores(all_candidates)
     deduped = deduplicate(all_candidates, settings.candidate_iou_threshold)
-    deduped.sort(key=lambda c: c.normalized_score, reverse=True)
+
+    # --- boundary hint --------------------------------------------------
+    # How cleanly can this moment actually be cut? A candidate the solver can
+    # only cut badly is worth less than its hook suggests, and that is known
+    # before any clip is rendered.
+    for candidate in deduped:
+        solved = solve_boundaries(transcript, candidate.start, min_duration, max_duration)
+        candidate.boundary_hint = solved.score.total if solved else 0.0
+
+    # --- listwise rerank -------------------------------------------------
+    # The only thing that breaks cross-window ties: show the model the
+    # candidates together and ask it to compare them. One call for the whole
+    # podcast, not one per window.
+    rerank_notes: list[str] = []
+    if rerank and len(deduped) > 1:
+        shortlist = sorted(deduped, key=lambda c: c.normalized_score, reverse=True)
+        shortlist = shortlist[: settings.rerank_shortlist]
+        try:
+            result = provider.complete(
+                prompt=build_rerank_prompt(shortlist, transcript),
+                system=RERANK_SYSTEM,
+                model=resolved_model,
+                json_mode=True,
+                max_tokens=max_output,
+            )
+            total_elapsed += result.elapsed
+            rankings, problems = parse_rankings(result.text, len(shortlist))
+            apply_rerank(shortlist, rankings)
+            rerank_notes.extend(problems)
+            if not rankings:
+                rerank_notes.append("rerank returned nothing usable; scores left flat")
+        except LLMError as exc:
+            # Reranking is an improvement, not a requirement. Losing it costs
+            # ranking quality, not the whole run.
+            rerank_notes.append(f"rerank failed: {exc}")
+
+    # --- semantic dedup ---------------------------------------------------
+    similarity = get_similarity(settings.similarity_backend)
+    deduped, similarity_notes = semantic_deduplicate(
+        deduped, similarity, settings.semantic_dedup_threshold
+    )
+
+    # --- final blended score ----------------------------------------------
+    weights = ScoringWeights(
+        llm_score=settings.weight_llm_score,
+        rerank=settings.weight_rerank,
+        boundary=settings.weight_boundary,
+        duration_fit=settings.weight_duration_fit_final,
+        diversity=settings.weight_diversity,
+    )
+    final_scores(deduped, min_duration, max_duration, weights)
 
     return {
+        "rerank_notes": rerank_notes,
+        "similarity_backend": similarity.name,
+        "similarity_notes": similarity_notes,
         "provider": provider.name,
         "model": resolved_model,
         "num_ctx": num_ctx,
@@ -235,6 +311,7 @@ async def handle_discover(ctx: JobContext) -> dict:
         discover_sync,
         transcript, provider_name, model, per_window,
         min_duration, max_duration, target_tokens, retries,
+        bool(params.get("rerank", settings.rerank_enabled)),
         on_window_done, lambda: ctx.cancelled,
     )
     elapsed = time.monotonic() - started

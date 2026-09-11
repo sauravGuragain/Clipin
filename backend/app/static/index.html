@@ -107,7 +107,7 @@
 <body>
 <div class="wrap">
   <h1>Clipper AI</h1>
-  <div class="sub">Phase 6 — AI clip discovery</div>
+  <div class="sub">Phase 7 — ranking</div>
 
   <div class="panel">
     <h2>Environment</h2>
@@ -248,7 +248,7 @@ async function loadClips(projectId) {
         <div class="clipmeta">
           <div class="n">${c.hook || `Clip ${c.index}`}</div>
           ${c.topic ? `<div class="t" style="margin-bottom:3px">${c.topic}${c.category ? ` &middot; ${c.category}` : ""}</div>` : ""}
-          <div class="t">${c.duration}s &middot; ${fmtTime(c.start)}${c.boundary_score != null ? ` &middot; ${(c.boundary_score*100).toFixed(0)}` : ""}</div>
+          <div class="t">${c.duration}s &middot; ${fmtTime(c.start)}${c.score != null ? ` &middot; rank ${(c.score*100).toFixed(0)}` : ""}${c.boundary_score != null ? ` &middot; cut ${(c.boundary_score*100).toFixed(0)}` : ""}${c.strategy === "even" ? " &middot; filler" : ""}</div>
           ${c.boundary_notes ? `<div class="t" style="margin-top:4px;opacity:.7">${c.boundary_notes}</div>` : ""}
           ${c.qc_ok ? "" : `<div class="qc">${c.qc_issues}</div>`}
         </div>

@@ -221,7 +221,9 @@ async def handle_generate_clips(ctx: JobContext) -> dict:
                 boundary_score=window.boundary_score,
                 boundary_notes="; ".join(window.boundary_notes) or None,
                 hook=(window.discovery or {}).get("hook"),
-                score=(window.discovery or {}).get("normalized_score"),
+                score=(window.discovery or {}).get(
+                    "final_score", (window.discovery or {}).get("normalized_score")
+                ),
                 topic=(window.discovery or {}).get("topic"),
                 category=(window.discovery or {}).get("category"),
                 crop_strategy=crop_strategy,

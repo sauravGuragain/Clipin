@@ -90,16 +90,25 @@ def select_clips(
     # Discovered anchors carry the model's judgement; even spacing carries
     # none. Either way the solver refines the actual cut points — discovery
     # chooses *where* to look, Phase 5 chooses *where to cut*.
+    anchor_meta: dict[float, dict] = {}
     if anchors:
         anchor_points = [float(a["start"]) for a in anchors]
         anchor_meta = {float(a["start"]): a for a in anchors}
-        strategy = "discovered"
+        # Discovery can return fewer moments than the user asked for — five
+        # candidates would otherwise cap the output at five clips regardless of
+        # the request. Even-spaced points are appended as a fallback tail so
+        # the count can still be met; they are marked "even" so the source of
+        # each clip stays visible rather than being quietly conflated.
+        if len(anchor_points) < count:
+            anchor_points += [
+                a for a in anchors_for(duration, count * 3)
+                if all(abs(a - existing) > min_duration for existing in anchor_points)
+            ]
     else:
         anchor_points = anchors_for(duration, count * 3)
-        anchor_meta = {}
-        strategy = "even"
 
     for anchor in anchor_points:
+        strategy = "discovered" if anchor in anchor_meta else "even"
         candidate = solve_boundaries(
             transcript, anchor, min_duration, max_duration, weights
         )

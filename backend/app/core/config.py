@@ -84,6 +84,23 @@ class Settings(BaseSettings):
     candidates_per_window: int = 3
     candidate_iou_threshold: float = 0.5
 
+    # --- Phase 7: ranking -------------------------------------------------
+    rerank_enabled: bool = True
+    rerank_shortlist: int = 20          # one extra call over the whole podcast
+    similarity_backend: str = "lexical"  # lexical | embedding
+    # Calibrated by measurement, not guessed. On real hooks from one podcast:
+    # genuinely distinct pairs topped out at 0.17; restatements floored at 0.29.
+    # Set toward the restatement end because dropping a good clip costs more
+    # than keeping a near-duplicate the user can reject in review.
+    semantic_dedup_threshold: float = 0.27
+
+    # Final score weights (spec 9 and 28).
+    weight_llm_score: float = 0.30
+    weight_rerank: float = 0.35
+    weight_boundary: float = 0.20
+    weight_duration_fit_final: float = 0.08
+    weight_diversity: float = 0.07
+
     # --- output ---------------------------------------------------------
     output_width: int = 1080
     output_height: int = 1920

@@ -63,8 +63,10 @@ Getting the start right matters most. The exact end will be adjusted to land on
 a sentence boundary, so approximate it rather than truncating a thought to hit
 the target length.
 
-If there are fewer than {want} genuinely good moments, return fewer. Returning
-weak moments is worse than returning none.
+Return {want} moments. Rank them yourself with the score field — a weaker one
+scored honestly low is more useful than a missing one, because a later pass
+compares all candidates against each other. Only return fewer if this section
+genuinely has nothing.
 
 TRANSCRIPT:
 {transcript}
@@ -85,6 +87,11 @@ class Candidate:
     normalized_score: float = 0.0
     confidence: float = 1.0
     issues: list[str] = field(default_factory=list)
+    # Phase 7
+    rerank_score: float = 0.5
+    boundary_hint: float = 0.5
+    final_score: float = 0.0
+    score_components: dict = field(default_factory=dict)
 
     @property
     def duration(self) -> float:
@@ -103,6 +110,10 @@ class Candidate:
             "reason": self.reason,
             "chunk_index": self.chunk_index,
             "confidence": round(self.confidence, 3),
+            "rerank_score": round(self.rerank_score, 4),
+            "boundary_hint": round(self.boundary_hint, 4),
+            "final_score": round(self.final_score, 4),
+            "score_components": self.score_components,
             "issues": self.issues,
         }
 

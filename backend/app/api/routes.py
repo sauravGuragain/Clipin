@@ -371,11 +371,12 @@ async def start_generate_clips(
 
 
 @router.get("/projects/{project_id}/clips")
-def list_clips(project_id: str, sort: str = "index") -> list[dict]:
+def list_clips(project_id: str, sort: str = "score") -> list[dict]:
     order = {
         "index": Clip.index,
         "duration": Clip.duration,
-        "score": Clip.boundary_score.desc(),
+        "score": Clip.score.desc().nullslast(),
+        "boundary": Clip.boundary_score.desc(),
         "start": Clip.start,
     }.get(sort, Clip.index)
     with get_session() as db:

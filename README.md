@@ -3,7 +3,7 @@
 Turns long-form podcasts into short-form vertical clips. Local-first: runs on
 your machine, no cloud APIs required.
 
-**Status: Phase 6 complete** — the model now chooses the moments.
+**Status: Phase 7 complete** — moments are found, compared and ranked.
 
 See `PLAN.md` for architecture and `STACK.md` for machine-specific decisions.
 
@@ -37,7 +37,7 @@ otherwise surface as a broken render many phases later.
 
 ```bash
 source .venv/bin/activate
-pytest -q          # 244 tests, repeatable
+pytest -q          # 288 tests, repeatable
 ```
 
 Tests run against a throwaway database in a temp directory, never
@@ -437,6 +437,71 @@ Small groups now fall back to a global min-max over raw scores, compressed into
 0.15-0.85 and carrying lower `confidence`, recording that the comparison is
 across calls rather than within one.
 
+## Phase 7: ranking
+
+Everything here came out of the first real discovery run, which produced five
+candidates scored `0.85, 0.85, 0.85, 0.85, 0.15` — a four-way tie that is no
+ranking at all.
+
+### Listwise rerank
+
+Per-window scoring cannot fix a cross-window tie: each call has no knowledge of
+the others. The only thing that establishes a real order is showing the model
+the candidates **together** and asking it to compare them — one extra call for
+the whole podcast, not one per window.
+
+Reranking is an improvement, not a requirement. If the call fails or returns
+nothing usable, scores stay flat and the run continues.
+
+### Final score
+
+Five weighted dimensions, all configurable:
+
+| Dimension | Default | What it contributes |
+|---|---|---|
+| `rerank` | 0.35 | The model's comparative judgement |
+| `llm_score` | 0.30 | Its per-window score |
+| `boundary` | 0.20 | How cleanly the solver can actually cut it |
+| `duration_fit` | 0.08 | Prefers the middle of the range |
+| `diversity` | 0.07 | Penalises five clips on one topic |
+
+`boundary` is worth noting: a moment the solver can only cut badly is worth less
+than its hook suggests, and that is known *before* anything renders.
+
+### Semantic dedup
+
+Time-overlap dedup only catches the same moment. A host restating a point four
+minutes later produces two temporally disjoint candidates that cut into
+near-identical clips.
+
+The threshold was **calibrated by measurement, not guessed**. Against the real
+hooks from one podcast, genuinely distinct pairs topped out at 0.17 while
+restatements floored at 0.29, so it sits at 0.27 — biased toward the restatement
+end because dropping a good clip costs more than keeping a near-duplicate the
+user can reject in review. Both bounds are pinned by tests.
+
+Two similarity backends:
+
+- **lexical** (default) — stemmed token overlap plus character trigrams. No
+  model, no download, runs in microseconds.
+- **embedding** (optional) — `fastembed`, `pip install fastembed`. Catches
+  paraphrase with no shared vocabulary, which lexical provably cannot:
+  "the display is asymmetrical" versus "the screen has an uneven layout" scores
+  0.02, indistinguishable from unrelated text. That limit has its own test.
+
+### Anchor top-up
+
+Discovery returning five moments used to cap the output at five clips no matter
+what was requested. Even-spaced anchors now fill the tail, labelled `even`
+rather than `discovered` so the source of each clip stays visible.
+
+### Prompt rebalanced
+
+Phase 6's prompt said *"returning weak moments is worse than returning none"*,
+and qwen3 complied — one candidate per window, which is exactly what starved the
+ranker. It now asks for the full count and to score honestly, since a later pass
+compares everything anyway.
+
 ## On React
 
 Deferred, deliberately. Between now and the results grid the UI is a form and a
@@ -444,7 +509,7 @@ progress bar; React would add a Vite scaffold, TS config, a dev proxy and a
 build step for no new capability. It earns its place at Phase 11, where clip
 cards, sorting and review controls arrive.
 
-## Next: Phase 7
+## Next: Phase 8
 
-Full scoring and ranking: semantic deduplication via embeddings, a listwise
-rerank pass over the survivors, and configurable dimension weights.
+Smart 9:16 crop: YuNet face detection, track association, lip-motion heuristic
+for the active speaker, and crop-path smoothing with hysteresis.
