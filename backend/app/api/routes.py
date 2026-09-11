@@ -18,6 +18,7 @@ from app.core.jobs import job_to_dict, runner
 from app.models.db import TERMINAL_STATUSES, Clip, Job, Project, get_session, new_id
 from app.services.media import MediaInspectionError, inspect
 from app.services.transcription.base import Transcript
+from app.services.ai.service import candidates_path, load_candidates
 from app.services.clips.service import clips_dir
 from app.services.transcription.service import transcript_path
 
@@ -59,6 +60,7 @@ def _serialise(p: Project) -> dict:
         "audio_path": p.audio_path,
         "has_extracted_audio": bool(p.audio_path and Path(p.audio_path).exists()),
         "has_transcript": transcript_path(p.id).exists(),
+        "candidate_count": len(load_candidates(p.id)),
         "clip_count": _clip_count(p.id),
         "created_at": p.created_at.isoformat() if p.created_at else None,
     }
@@ -253,6 +255,64 @@ def transcription_backends() -> list[dict]:
     return out
 
 
+# --- discovery ----------------------------------------------------------
+
+
+@router.get("/llm/providers")
+def llm_providers() -> list[dict]:
+    from app.services.ai.providers import PROVIDERS, OllamaProvider
+
+    out = []
+    for name, cls in PROVIDERS.items():
+        provider = cls()
+        available, reason = provider.is_available()
+        entry = {
+            "name": name,
+            "available": available,
+            "reason": reason,
+            "default_model": provider.default_model,
+        }
+        if isinstance(provider, OllamaProvider) and available:
+            entry["models"] = provider.list_models()
+        out.append(entry)
+    return out
+
+
+@router.post("/projects/{project_id}/discover", status_code=202)
+async def start_discover(
+    project_id: str,
+    provider: str | None = None,
+    model: str | None = None,
+) -> dict:
+    with get_session() as db:
+        if db.get(Project, project_id) is None:
+            raise HTTPException(status_code=404, detail="Project not found.")
+
+    if not transcript_path(project_id).exists():
+        raise HTTPException(
+            status_code=409,
+            detail="Transcribe this project before discovering clips.",
+        )
+
+    params: dict = {}
+    if provider:
+        params["provider"] = provider
+    if model:
+        params["model"] = model
+
+    job_id = await runner.submit("discover", project_id, params)
+    with get_session() as db:
+        return job_to_dict(db.get(Job, job_id))
+
+
+@router.get("/projects/{project_id}/candidates")
+def get_candidates(project_id: str) -> dict:
+    path = candidates_path(project_id)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="No candidates for this project yet.")
+    return json.loads(path.read_text())
+
+
 # --- clips --------------------------------------------------------------
 
 
@@ -270,6 +330,8 @@ def _serialise_clip(c: Clip) -> dict:
         "strategy": c.strategy,
         "boundary_score": c.boundary_score,
         "boundary_notes": c.boundary_notes,
+        "topic": c.topic,
+        "category": c.category,
         "crop_strategy": c.crop_strategy,
         "qc_ok": c.qc_ok,
         "qc_issues": c.qc_issues,
@@ -285,6 +347,7 @@ async def start_generate_clips(
     count: int | None = None,
     crop_strategy: str | None = None,
     captions: bool = True,
+    use_discovery: bool = True,
 ) -> dict:
     with get_session() as db:
         if db.get(Project, project_id) is None:
@@ -296,7 +359,7 @@ async def start_generate_clips(
             detail="Transcribe this project before generating clips.",
         )
 
-    params: dict = {"captions": captions}
+    params: dict = {"captions": captions, "use_discovery": use_discovery}
     if count is not None:
         params["count"] = count
     if crop_strategy is not None:

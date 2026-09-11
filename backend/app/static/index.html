@@ -107,7 +107,7 @@
 <body>
 <div class="wrap">
   <h1>Clipper AI</h1>
-  <div class="sub">Phase 5 — clip boundaries</div>
+  <div class="sub">Phase 6 — AI clip discovery</div>
 
   <div class="panel">
     <h2>Environment</h2>
@@ -246,7 +246,8 @@ async function loadClips(projectId) {
       <div class="clipcard">
         <video src="${c.video_url}" controls preload="metadata"></video>
         <div class="clipmeta">
-          <div class="n">Clip ${c.index}</div>
+          <div class="n">${c.hook || `Clip ${c.index}`}</div>
+          ${c.topic ? `<div class="t" style="margin-bottom:3px">${c.topic}${c.category ? ` &middot; ${c.category}` : ""}</div>` : ""}
           <div class="t">${c.duration}s &middot; ${fmtTime(c.start)}${c.boundary_score != null ? ` &middot; ${(c.boundary_score*100).toFixed(0)}` : ""}</div>
           ${c.boundary_notes ? `<div class="t" style="margin-top:4px;opacity:.7">${c.boundary_notes}</div>` : ""}
           ${c.qc_ok ? "" : `<div class="qc">${c.qc_issues}</div>`}
@@ -270,7 +271,7 @@ async function loadProjects() {
     }
     $("list").innerHTML = list.map(p => `
       <div class="card">
-        <h3>${p.name}${p.has_extracted_audio ? '<span class="badge ok">audio</span>' : ""}${p.has_transcript ? '<span class="badge ok">transcript</span>' : ""}${p.clip_count ? `<span class="badge ok">${p.clip_count} clips</span>` : ""}</h3>
+        <h3>${p.name}${p.has_extracted_audio ? '<span class="badge ok">audio</span>' : ""}${p.has_transcript ? '<span class="badge ok">transcript</span>' : ""}${p.candidate_count ? `<span class="badge ok">${p.candidate_count} moments</span>` : ""}${p.clip_count ? `<span class="badge ok">${p.clip_count} clips</span>` : ""}</h3>
         <div class="row"><span>Duration</span><span class="mono">${fmtDuration(p.duration)}</span></div>
         <div class="row"><span>Resolution</span><span class="mono">${p.width && p.height ? p.width + "\u00d7" + p.height : "audio only"}</span></div>
         <div class="row"><span>Frame rate</span><span class="mono">${p.fps ? p.fps.toFixed(2) + " fps" : "\u2014"}</span></div>
@@ -279,6 +280,7 @@ async function loadProjects() {
         <div class="actions">
           <button class="act" data-kind="extract-audio" data-project="${p.id}" onclick="startJob('${p.id}','extract-audio',false)">Extract audio</button>
           ${p.has_extracted_audio ? `<button class="act" data-kind="transcribe" data-project="${p.id}" onclick="startJob('${p.id}','transcribe',false)">Transcribe</button>` : ""}
+          ${p.has_transcript ? `<button class="act" data-kind="discover" data-project="${p.id}" onclick="startJob('${p.id}','discover',false)">Find moments</button>` : ""}
           ${p.has_transcript ? `<button class="act" data-kind="clips" data-project="${p.id}" onclick="startJob('${p.id}','clips',false)">Generate clips</button>` : ""}
           ${p.has_transcript ? `<button class="ghost" onclick="window.open('/api/projects/${p.id}/transcript','_blank')">Transcript</button>` : ""}
           <button class="ghost del" data-id="${p.id}">Delete</button>

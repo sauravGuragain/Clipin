@@ -103,6 +103,8 @@ class Clip(Base):
 
     text: Mapped[str | None] = mapped_column(Text, nullable=True)
     hook: Mapped[str | None] = mapped_column(Text, nullable=True)
+    topic: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    category: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
     # Phase 4 has no scoring; Phase 5 fills these in.
     score: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -155,6 +157,8 @@ def _migrate() -> None:
         for column, ddl in (
             ("boundary_score", "ALTER TABLE clips ADD COLUMN boundary_score FLOAT"),
             ("boundary_notes", "ALTER TABLE clips ADD COLUMN boundary_notes TEXT"),
+            ("topic", "ALTER TABLE clips ADD COLUMN topic VARCHAR(160)"),
+            ("category", "ALTER TABLE clips ADD COLUMN category VARCHAR(32)"),
         ):
             if column not in clip_cols:
                 with engine.begin() as conn:

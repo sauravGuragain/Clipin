@@ -3,7 +3,7 @@
 Turns long-form podcasts into short-form vertical clips. Local-first: runs on
 your machine, no cloud APIs required.
 
-**Status: Phase 5 complete** — end to end, with solved clip boundaries.
+**Status: Phase 6 complete** — the model now chooses the moments.
 
 See `PLAN.md` for architecture and `STACK.md` for machine-specific decisions.
 
@@ -37,7 +37,7 @@ otherwise surface as a broken render many phases later.
 
 ```bash
 source .venv/bin/activate
-pytest -q          # 160 tests, repeatable
+pytest -q          # 244 tests, repeatable
 ```
 
 Tests run against a throwaway database in a temp directory, never
@@ -106,6 +106,9 @@ execution so this cannot regress silently.
 | GET | `/api/transcription/backends` | Which backends are available here |
 | POST | `/api/projects/{id}/clips` | Generate clips (`?count=`, `?crop_strategy=`, `?captions=`) |
 | GET | `/api/projects/{id}/clips` | List clips (`?sort=index\|duration\|start`) |
+| POST | `/api/projects/{id}/discover` | Find moments with the LLM (`?provider=`, `?model=`) |
+| GET | `/api/projects/{id}/candidates` | Discovered moments, scores and rejections |
+| GET | `/api/llm/providers` | Which providers and Ollama models are available |
 | GET | `/api/clips/{id}/video` | Stream a rendered clip |
 | DELETE | `/api/clips/{id}` | Remove one clip |
 
@@ -317,6 +320,123 @@ measured on real work. A 90-minute podcast at 1x realtime is a very different
 product from one at 20x, and that number should come from measurement rather
 than estimation.
 
+## Phase 6: AI clip discovery
+
+Evenly spaced anchors are gone. A local model reads the transcript and says
+where the interesting moments are; Phase 5's solver still decides where to cut.
+Discovery chooses **where to look**, the solver chooses **where to cut**.
+
+### Setup
+
+```bash
+ollama serve
+ollama pull qwen3:8b       # or any ~7-9B instruct model
+```
+
+No cloud key is required, ever. Anthropic and OpenAI providers exist so the
+local-only decision stays reversible, not because anything needs them.
+
+Then in the UI: **Find moments** → **Generate clips**. Clip cards show the
+model's hook, topic and category.
+
+`keep_alive=0` is set on every Ollama call. That is deliberate: leaving a 5 GB
+model resident after discovery would collide with the render stage on a 16 GB
+machine (STACK.md §3).
+
+### Context window
+
+Ollama derives a default context from available VRAM and may pick **4096**.
+`num_ctx` covers prompt *and* generation, so an undersized window does not
+error — it silently drops the oldest tokens, which here is the transcript. The
+model then produces confident JSON about text it never received, the timestamp
+validator rejects nearly all of it, and the whole thing looks like a useless
+model rather than a misconfiguration.
+
+So `num_ctx` is set explicitly (`LLM_NUM_CTX`, default 8192) rather than
+inherited, output is capped at 768 tokens (three structured candidates is ~300;
+2048 was reserving context for output that never arrives), and a preflight check
+runs against the widest window before any generation starts. Shipped defaults
+leave about 70% of the window free.
+
+### Reasoning models
+
+qwen3 and deepseek-r1 think before answering. Ollama returns that reasoning in a
+separate field so it never reaches the JSON parser — but it is still generated,
+still costs seconds, and still counts against `num_predict`. A long think can
+therefore truncate the answer after it, and a truncated response is a failed
+window.
+
+Measured on an M5: a trivial JSON request produced a 50-token answer and **281
+completion tokens**. Reasoning is off by default for structured extraction
+(`LLM_THINK=0`) and left on for free-form generation, where it may genuinely
+help. Set `LLM_THINK=1` to compare.
+
+If a think ever does overrun the budget, Ollama returns reasoning with empty
+content — that now raises a message naming `LLM_MAX_OUTPUT` and `LLM_THINK`
+rather than a bare "empty message".
+
+### Malformed output is the normal case
+
+A local 8B model asked for JSON complies most of the time and produces
+something adjacent the rest of the time. All of these are handled and tested:
+
+markdown fences, prose preamble and postamble, trailing commas, unquoted keys,
+smart quotes, a bare object where an array was asked for, `{"clips": [...]}`
+wrapping, braces inside string values, and an outright refusal.
+
+Repair runs before retry, because a retry costs a full generation — 20-30
+seconds locally — and repair costs microseconds.
+
+### Hallucinated timestamps
+
+Models invent numbers. Every returned timestamp is snapped to a real word
+boundary in the transcript; anything more than 6s from any real boundary is
+treated as fabricated and the candidate is **discarded, not guessed at**.
+Rejections are reported rather than swallowed — if a model produces nothing
+usable, the reasons are the only way to distinguish a bad prompt from a bad
+model.
+
+### A candidate is an anchor, not a cut
+
+Found on the first real run against qwen3:8b: asked for 25-60 second moments it
+returned 9.7 second ones, every candidate was rejected as "too short", and
+discovery failed on an entire podcast with zero results.
+
+The rejection was wrong. A candidate only says *where* something interesting
+happens — Phase 5's solver decides the actual boundaries and expands a 10s
+pointer into a valid 42s clip. The code already made this argument for
+over-long candidates and kept them; too-short was rejected out of plain
+inconsistency.
+
+Duration violations are now recorded as issues and the anchor is kept. Only a
+span under two seconds is dropped, because below that it carries no information
+about location either. Verified end to end: 10.3s anchors produce 42.2s clips
+at boundary score 0.996, with the model's hook attached.
+
+The prompt now also tells the model that the end will be adjusted to a sentence
+boundary, so it need not truncate a thought to hit a target length.
+
+### Rejections report the pattern
+
+The failure above said `too short (9.7s) at 145.5` — one instance out of dozens
+of identical failures, which reads like an unlucky candidate rather than a
+systematic problem. Rejections are now grouped by kind with counts:
+`18 candidate(s) rejected: 15 x spans too short..., 3 x invented timestamps`.
+
+### Score comparability
+
+Windows are scored in independent calls, so an 87 from one and an 87 from
+another do not mean the same thing.
+
+Where a window returned enough candidates to have a distribution, scores are
+z-scored within it to remove that call's calibration drift. Where it did not —
+and **a model asked for three moments routinely returns one** — there is nothing
+to z-score against. The first implementation assigned a neutral 0.5 in that
+case, which left every candidate tied and produced completely unranked output.
+Small groups now fall back to a global min-max over raw scores, compressed into
+0.15-0.85 and carrying lower `confidence`, recording that the comparison is
+across calls rather than within one.
+
 ## On React
 
 Deferred, deliberately. Between now and the results grid the UI is a form and a
@@ -324,7 +444,7 @@ progress bar; React would add a Vite scaffold, TS config, a dev proxy and a
 build step for no new capability. It earns its place at Phase 11, where clip
 cards, sorting and review controls arrive.
 
-## Next: Phase 6
+## Next: Phase 7
 
-The LLM provider abstraction and real candidate discovery via Ollama — replacing
-evenly spaced anchors with moments the model actually finds interesting.
+Full scoring and ranking: semantic deduplication via embeddings, a listwise
+rerank pass over the survivors, and configurable dimension weights.

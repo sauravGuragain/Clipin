@@ -66,6 +66,24 @@ class Settings(BaseSettings):
     weight_low_filler: float = 0.10
     weight_duration_fit: float = 0.08
 
+    # --- LLM / discovery -------------------------------------------------
+    # "auto" prefers Ollama, matching the project's local-first stance.
+    llm_provider: str = "auto"
+    llm_model: str = ""                 # empty = the provider's default
+    llm_window_tokens: int = 1800       # transcript tokens per model call
+    llm_retries: int = 1                # a retry costs a full generation
+    # Context window requested from Ollama. Must comfortably exceed
+    # llm_window_tokens + prompt overhead + llm_max_output.
+    llm_num_ctx: int = 8192
+    # Three candidates of structured JSON is roughly 300 tokens. 2048 was
+    # reserving context for output that never arrives.
+    llm_max_output: int = 768
+    # Reasoning costs seconds and output budget for little gain on structured
+    # extraction. Set LLM_THINK=1 to compare quality with it enabled.
+    llm_think: bool = False
+    candidates_per_window: int = 3
+    candidate_iou_threshold: float = 0.5
+
     # --- output ---------------------------------------------------------
     output_width: int = 1080
     output_height: int = 1920

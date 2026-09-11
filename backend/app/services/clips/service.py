@@ -11,6 +11,7 @@ from app.core.jobs import JobContext
 from app.models.db import Clip, Project, get_session, new_id
 from app.services.captions.ass import CaptionStyle
 from app.services.clips.render import RenderSettings, render_clip
+from app.services.ai.service import load_candidates
 from app.services.clips.boundaries import BoundaryWeights
 from app.services.clips.select import ClipWindow, select_clips
 from app.services.transcription.base import Transcript
@@ -133,8 +134,17 @@ async def handle_generate_clips(ctx: JobContext) -> dict:
         low_filler=settings.weight_low_filler,
         duration_fit=settings.weight_duration_fit,
     )
+    # Prefer discovered moments when they exist. use_discovery=False forces
+    # the even-anchor path, which is useful for comparing the two.
+    anchors = None
+    if params.get("use_discovery", True):
+        stored = load_candidates(project_id)
+        if stored:
+            anchors = stored[:max(count * 2, count)]
+
     windows: list[ClipWindow] = select_clips(
         transcript, count, min_duration, max_duration,
+        anchors=anchors,
         padding=settings.clip_padding,
         weights=weights,
         min_boundary_score=float(params.get("min_boundary_score",
@@ -210,6 +220,10 @@ async def handle_generate_clips(ctx: JobContext) -> dict:
                 strategy=window.strategy,
                 boundary_score=window.boundary_score,
                 boundary_notes="; ".join(window.boundary_notes) or None,
+                hook=(window.discovery or {}).get("hook"),
+                score=(window.discovery or {}).get("normalized_score"),
+                topic=(window.discovery or {}).get("topic"),
+                category=(window.discovery or {}).get("category"),
                 crop_strategy=crop_strategy,
                 render_path=str(dest),
                 qc_ok=qc["ok"],
@@ -233,6 +247,7 @@ async def handle_generate_clips(ctx: JobContext) -> dict:
     return {
         "clips": len(results),
         "requested": count,
+        "anchor_source": "discovery" if anchors else "even spacing",
         "note": shortfall,
         "failed_qc": [r["index"] for r in results if not r["qc"]["ok"]],
         "details": results,

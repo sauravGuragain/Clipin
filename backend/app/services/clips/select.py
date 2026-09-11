@@ -26,6 +26,7 @@ class ClipWindow:
     words: list[Word]
     text: str
     strategy: str = "even"
+    discovery: dict | None = None
     boundary_score: float = 0.0
     boundary_notes: list[str] = field(default_factory=list)
     components: dict[str, float] = field(default_factory=dict)
@@ -73,6 +74,7 @@ def select_clips(
     padding: float = 0.35,
     weights: BoundaryWeights | None = None,
     min_boundary_score: float = 0.0,
+    anchors: list[dict] | None = None,
 ) -> list[ClipWindow]:
     """Pick `count` non-overlapping, well-bounded windows.
 
@@ -85,7 +87,19 @@ def select_clips(
     duration = transcript.duration or transcript.segments[-1].end
     windows: list[ClipWindow] = []
 
-    for anchor in anchors_for(duration, count * 3):
+    # Discovered anchors carry the model's judgement; even spacing carries
+    # none. Either way the solver refines the actual cut points — discovery
+    # chooses *where* to look, Phase 5 chooses *where to cut*.
+    if anchors:
+        anchor_points = [float(a["start"]) for a in anchors]
+        anchor_meta = {float(a["start"]): a for a in anchors}
+        strategy = "discovered"
+    else:
+        anchor_points = anchors_for(duration, count * 3)
+        anchor_meta = {}
+        strategy = "even"
+
+    for anchor in anchor_points:
         candidate = solve_boundaries(
             transcript, anchor, min_duration, max_duration, weights
         )
@@ -105,10 +119,11 @@ def select_clips(
             end=candidate.end,
             words=words,
             text=" ".join(s.text.strip() for s in chosen).strip(),
-            strategy="even",
+            strategy=strategy,
             boundary_score=candidate.score.total,
             boundary_notes=candidate.score.notes,
             components=candidate.score.components,
+            discovery=anchor_meta.get(anchor),
         )
 
         if any(_overlaps(window, existing) for existing in windows):
